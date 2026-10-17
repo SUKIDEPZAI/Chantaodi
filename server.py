@@ -1,4 +1,3 @@
-
 import os
 import json
 import base64
@@ -195,47 +194,73 @@ def normalize_history(raw_history):
 
 def safe_provider_error(exc):
     """
-    Chuyển lỗi API thành thông báo dễ hiểu.
+    Nhận diện lỗi nhà cung cấp và trả thông báo phù hợp.
+
+    Highway AI có thể trả:
+      { "code": 403, "reason": "NOT_ENOUGH_BALANCE",
+        "message": "not enough balance" }
+    nên phải đọc cả trường `reason`, không chỉ `code`.
     Không trả API key hoặc header xác thực về trình duyệt.
     """
     status = getattr(exc, "status_code", None)
     body = getattr(exc, "body", None)
 
     code = ""
+    reason = ""
     message = ""
 
     if isinstance(body, dict):
         code = str(body.get("code", "") or "")
-        message = str(
-            body.get("message", "")
-            or body.get("error", "")
-            or ""
-        )
+        reason = str(body.get("reason", "") or "")
+        message = str(body.get("message", "") or "")
 
-        # Một số API đặt mã lỗi bên trong object error.
         nested = body.get("error")
         if isinstance(nested, dict):
-            code = str(
-                nested.get("code", code) or code
-            )
+            code = str(nested.get("code", code) or code)
+            reason = str(nested.get("reason", reason) or reason)
             message = str(
                 nested.get("message", message) or message
             )
+        elif isinstance(nested, str) and not message:
+            message = nested
 
+    # Dự phòng khi nhà cung cấp trả lỗi dưới dạng chuỗi
+    # hoặc chỉ có trong str(exc).
     raw = str(exc)
+    searchable = " ".join(
+        [code, reason, message, raw]
+    ).upper()
 
-    if not code:
-        if "NOT_ENOUGH_BALANCE" in raw:
-            code = "NOT_ENOUGH_BALANCE"
-
-    if code == "NOT_ENOUGH_BALANCE":
+    if (
+        "NOT_ENOUGH_BALANCE" in searchable
+        or "NOT ENOUGH BALANCE" in searchable
+    ):
         return {
             "status": 402,
-            "code": code,
+            "code": "NOT_ENOUGH_BALANCE",
             "error": (
-                "Tài khoản API không đủ số dư. "
-                "Hãy kiểm tra credit, hạn mức và trạng thái "
-                "thanh toán tại nhà cung cấp Highway AI."
+                "API không đủ số dư. Hãy kiểm tra credit, "
+                "hạn mức và trạng thái thanh toán của "
+                "tài khoản Highway AI/JIEKOU."
+            ),
+        }
+
+    # Hai exception dưới đây thường không có status_code,
+    # phải check trước các nhánh status-based để không bị nuốt.
+    if isinstance(exc, APITimeoutError):
+        return {
+            "status": 504,
+            "code": "API_TIMEOUT",
+            "error": "API phản hồi quá lâu. Hãy thử lại.",
+        }
+
+    if isinstance(exc, APIConnectionError):
+        return {
+            "status": 502,
+            "code": "API_CONNECTION_ERROR",
+            "error": (
+                "Không thể kết nối tới nhà cung cấp API. "
+                "Kiểm tra endpoint và kết nối mạng của Render."
             ),
         }
 
@@ -244,8 +269,8 @@ def safe_provider_error(exc):
             "status": 502,
             "code": "UPSTREAM_AUTH_ERROR",
             "error": (
-                "Nhà cung cấp từ chối xác thực API. "
-                "Kiểm tra HIGHWAY_API_KEY trên Render."
+                "API từ chối xác thực. Kiểm tra API key "
+                "trong Render Environment."
             ),
         }
 
@@ -254,8 +279,8 @@ def safe_provider_error(exc):
             "status": 502,
             "code": "UPSTREAM_FORBIDDEN",
             "error": (
-                "API từ chối yêu cầu. Kiểm tra số dư, "
-                "quyền truy cập model và trạng thái tài khoản."
+                "Nhà cung cấp từ chối yêu cầu. Kiểm tra "
+                "số dư, quyền truy cập model và hạn mức."
             ),
         }
 
@@ -274,8 +299,8 @@ def safe_provider_error(exc):
             "status": 429,
             "code": "RATE_LIMIT",
             "error": (
-                "API đang giới hạn tần suất hoặc hạn mức. "
-                "Hãy kiểm tra quota và thử lại sau."
+                "API đang giới hạn tốc độ hoặc quota. "
+                "Kiểm tra hạn mức rồi thử lại."
             ),
         }
 
@@ -294,25 +319,8 @@ def safe_provider_error(exc):
             "status": 502,
             "code": "UPSTREAM_ERROR",
             "error": (
-                "Máy chủ API đang gặp lỗi. "
+                "Máy chủ nhà cung cấp API đang gặp lỗi. "
                 "Hãy thử lại sau."
-            ),
-        }
-
-    if isinstance(exc, APITimeoutError):
-        return {
-            "status": 504,
-            "code": "API_TIMEOUT",
-            "error": "API phản hồi quá lâu. Hãy thử lại.",
-        }
-
-    if isinstance(exc, APIConnectionError):
-        return {
-            "status": 502,
-            "code": "API_CONNECTION_ERROR",
-            "error": (
-                "Không thể kết nối tới nhà cung cấp API. "
-                "Kiểm tra endpoint và kết nối mạng của Render."
             ),
         }
 
@@ -323,10 +331,10 @@ def safe_provider_error(exc):
 
     return {
         "status": 502,
-        "code": "API_ERROR",
+        "code": "UPSTREAM_API_ERROR",
         "error": (
-            "Yêu cầu AI thất bại. Kiểm tra log của Render "
-            "để biết thêm chi tiết."
+            "Gọi API thất bại. Kiểm tra log Render "
+            "và thông tin lỗi từ nhà cung cấp."
         ),
     }
 
@@ -463,6 +471,11 @@ def chat():
     except (APIConnectionError, APITimeoutError) as exc:
         result = safe_provider_error(exc)
 
+        logger.warning(
+            "Provider connection error: code=%s",
+            result["code"],
+        )
+
         return jsonify({
             "error": result["error"],
             "code": result["code"],
@@ -515,4 +528,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         debug=False,
-    )
+)
