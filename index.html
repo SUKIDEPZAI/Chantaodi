@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Highway AI Chat</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#111a2e;--line:#26334f;--accent:#7c9cff;--text:#eef3ff;--muted:#9ba9c7}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#172447,#0b1020 55%);color:var(--text);font:15px/1.5 system-ui,Segoe UI,sans-serif;height:100dvh}
+.app{height:100dvh;max-width:1050px;margin:auto;display:flex;flex-direction:column;padding:14px;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);background:#111a2ee8;border-radius:18px;padding:13px 16px}
+.brand{font-weight:800;font-size:18px}.sub{font-size:12px;color:var(--muted)}#status{font-size:12px;color:#a8f0c6}
+#chat{flex:1;overflow:auto;border:1px solid var(--line);background:#0e1629c9;border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.welcome{margin:auto;text-align:center;max-width:560px;color:var(--muted)}.welcome h1{color:var(--text);font-size:clamp(24px,5vw,36px);margin:0 0 8px}
+.msg{max-width:min(84%,760px);padding:12px 15px;border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#263d72;border:1px solid #3b5897}.assistant{align-self:flex-start;background:#151f35;border:1px solid var(--line)}.label{font-size:11px;color:#aebde0;margin-bottom:5px}
+#attachments{display:flex;gap:8px;flex-wrap:wrap}.filechip{font-size:12px;background:#202c45;border:1px solid var(--line);padding:6px 9px;border-radius:10px}
+.composer{border:1px solid var(--line);background:#111a2e;border-radius:18px;padding:12px}
+#prompt{width:100%;resize:vertical;min-height:58px;max-height:180px;background:transparent;color:var(--text);border:0;outline:0;font:inherit}
+.tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}
+button,.upload{border:1px solid var(--line);background:#1b2944;color:var(--text);padding:9px 13px;border-radius:11px;cursor:pointer;font:inherit}
+button.primary{background:var(--accent);color:#081127;border-color:transparent;font-weight:750}button:disabled{opacity:.5;cursor:wait}
+.hint{color:var(--muted);font-size:11px;margin-left:auto}
+#fileInput{display:none}img.preview{max-width:100%;max-height:260px;display:block;margin-top:8px;border-radius:10px}
+@media(max-width:600px){.app{padding:8px}.msg{max-width:94%}.hint{width:100%;margin:0}}
+</style>
+</head>
+<body><main class="app">
+<header><div><div class="brand">✦ Highway AI</div><div class="sub">Trò chuyện · Đính kèm tệp và ảnh</div></div><div id="status">Đang kết nối…</div></header>
+<section id="chat" aria-live="polite"><div class="welcome"><h1>Xin chào 👋</h1><div>Hỏi bất cứ điều gì, hoặc đính kèm tệp/ảnh để bắt đầu.</div></div></section>
+<div id="attachments"></div>
+<section class="composer">
+<textarea id="prompt" placeholder="Nhắn tin cho AI… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+<div class="tools"><label class="upload" for="fileInput">＋ Tệp / ảnh</label><input id="fileInput" type="file" multiple>
+<button id="clearBtn" type="button">Xóa chat</button><span class="hint">Không đặt API key trong HTML.</span><button class="primary" id="sendBtn" type="button">Gửi ↑</button></div>
+</section></main>
+<script>
+const chat=document.querySelector('#chat'), promptBox=document.querySelector('#prompt'), fileInput=document.querySelector('#fileInput'), attachments=document.querySelector('#attachments'), sendBtn=document.querySelector('#sendBtn'), statusEl=document.querySelector('#status');
+let files=[], history=[];
+async function check(){try{let r=await fetch('/api/health');statusEl.textContent=r.ok?'Sẵn sàng':'Máy chủ lỗi';}catch{statusEl.textContent='Không kết nối máy chủ';}}
+function addMessage(role,text,selected=[]){const welcome=chat.querySelector('.welcome');if(welcome)welcome.remove();const box=document.createElement('div');box.className='msg '+role;const label=document.createElement('div');label.className='label';label.textContent=role==='user'?'Bạn':'Highway AI';box.append(label,document.createTextNode(text));if(selected.length){const f=document.createElement('div');f.className='label';f.style.marginTop='8px';f.textContent='Đính kèm: '+selected.map(x=>x.name).join(', ');box.append(f)}chat.append(box);chat.scrollTop=chat.scrollHeight;return box}
+function renderFiles(){attachments.replaceChildren();files.forEach((f,i)=>{const el=document.createElement('span');el.className='filechip';el.textContent='📎 '+f.name+' ';const b=document.createElement('button');b.textContent='×';b.style.padding='0 5px';b.onclick=()=>{files.splice(i,1);renderFiles()};el.append(b);attachments.append(el)})}
+fileInput.addEventListener('change',()=>{files.push(...Array.from(fileInput.files));renderFiles();fileInput.value=''});
+async function send(){const text=promptBox.value.trim();if(!text&&!files.length)return;const chosen=files.slice();addMessage('user',text||'(Đã gửi tệp)',chosen);promptBox.value='';files=[];renderFiles();sendBtn.disabled=true;sendBtn.textContent='Đang gửi…';const wait=addMessage('assistant','Đang xử lý…');
+try{const fd=new FormData();fd.append('message',text);fd.append('history',JSON.stringify(history.slice(-12)));chosen.forEach(f=>fd.append('files',f));const res=await fetch('/api/chat',{method:'POST',body:fd});let data=await res.json();wait.remove();if(!res.ok)throw new Error(data.error||'Yêu cầu thất bại');addMessage('assistant',data.reply||'(AI không trả về nội dung)');history.push({role:'user',content:text||'(Đã gửi tệp)'});history.push({role:'assistant',content:data.reply||''});}
+catch(e){wait.remove();addMessage('assistant','Lỗi: '+e.message+'\nKiểm tra API key, tên model và log của Render.')}
+finally{sendBtn.disabled=false;sendBtn.textContent='Gửi ↑';promptBox.focus()}}
+sendBtn.onclick=send;promptBox.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});document.querySelector('#clearBtn').onclick=()=>{chat.replaceChildren();history=[];const w=document.createElement('div');w.className='welcome';w.innerHTML='<h1>Chat mới</h1><div>Hãy gửi câu hỏi hoặc đính kèm tệp/ảnh.</div>';chat.append(w)};check();
+</script></body></html>
