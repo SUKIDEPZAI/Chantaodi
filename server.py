@@ -1,4 +1,4 @@
-import os, json, base64, mimetypes, logging, urllib.request, urllib.parse, html
+import os, re, json, base64, mimetypes, logging, urllib.request, urllib.parse, html
 from html.parser import HTMLParser
 from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
@@ -53,37 +53,91 @@ class DuckDuckGoParser(HTMLParser):
             if self.results and not self.results[-1].get('content'): self.results[-1]['content']=' '.join(''.join(self.buf).split())
             self.capture=None; self.buf=[]
 
+def _clean_html(value):
+    value=re.sub(r'<script\b[^>]*>[\s\S]*?</script>', ' ', value, flags=re.I)
+    value=re.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', value, flags=re.I)
+    return html.unescape(re.sub(r'<[^>]+>', ' ', value)).replace('\xa0',' ').strip()
+
+def _search_ddg(query, limit):
+    url='https://html.duckduckgo.com/html/?q='+urllib.parse.quote(query[:500])
+    req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36','Accept-Language':'vi,en;q=0.8'})
+    with urllib.request.urlopen(req,timeout=12) as r: page=r.read().decode('utf-8','replace')
+    out=[]
+    for href,title,snippet in re.findall(r'<a[^>]+class=["\']result__a["\'][^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>(.*?)(?=<div class=["\']result|</div>\s*</div>)',page,re.I|re.S):
+        href=html.unescape(href); title=_clean_html(title); snippet=_clean_html(snippet)
+        if 'uddg=' in href:
+            try: href=urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get('uddg',[href])[0]
+            except Exception: pass
+        if href.startswith('//'): href='https:'+href
+        if title and href.startswith('http'): out.append({'title':title[:300],'url':href[:1000],'content':snippet[:1800],'provider':'DuckDuckGo'})
+        if len(out)>=limit: break
+    return out
+
+def _search_wikipedia(query, limit):
+    url='https://en.wikipedia.org/w/api.php?'+urllib.parse.urlencode({'action':'query','list':'search','srsearch':query[:300],'format':'json','srlimit':min(limit,5)})
+    req=urllib.request.Request(url,headers={'User-Agent':'MotAPIStudio/2.0 (web research)'})
+    with urllib.request.urlopen(req,timeout=8) as r:data=json.loads(r.read().decode())
+    return [{'title':x.get('title',''),'url':'https://en.wikipedia.org/wiki/'+urllib.parse.quote(x.get('title','').replace(' ','_')),'content':_clean_html(x.get('snippet',''))[:1000],'provider':'Wikipedia'} for x in data.get('query',{}).get('search',[]) if x.get('title')]
+
+def _search_bing(query, limit):
+    url='https://www.bing.com/search?'+urllib.parse.urlencode({'q':query[:500]})
+    req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36','Accept-Language':'vi,en;q=0.8'})
+    with urllib.request.urlopen(req,timeout=10) as r:page=r.read().decode('utf-8','replace')
+    out=[]
+    for href,title,snippet in re.findall(r'<li class="b_algo"[\s\S]*?<h2><a href="(https?://[^" ]+)"[^>]*>(.*?)</a></h2>([\s\S]*?)(?=<li class="b_algo"|<ol id="b_results")',page,re.I):
+        title=_clean_html(title); snippet=_clean_html(snippet)
+        if title and href.startswith('http'):out.append({'title':title[:300],'url':html.unescape(href)[:1000],'content':snippet[:1800],'provider':'Bing'})
+        if len(out)>=limit:break
+    return out
+
+def _search_google_news(query, limit):
+    url='https://news.google.com/rss/search?'+urllib.parse.urlencode({'q':query[:300],'hl':'vi','gl':'VN','ceid':'VN:vi'})
+    req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; MotAPIStudio/2.0)'})
+    with urllib.request.urlopen(req,timeout=10) as r: raw=r.read()
+    import xml.etree.ElementTree as ET
+    root=ET.fromstring(raw);out=[]
+    for item in root.findall('.//item')[:min(limit,6)]:
+        title=item.findtext('title','').strip();link=item.findtext('link','').strip();desc=_clean_html(item.findtext('description',''))
+        if title and link.startswith('http'):out.append({'title':title[:300],'url':link[:1000],'content':desc[:1400],'provider':'Google News'})
+    return out
+
 def web_search(query, limit=6):
-    limit=max(1,min(int(limit),8)); key=os.getenv('TAVILY_API_KEY','').strip()
+    
+    try: limit=max(1,min(int(limit),10))
+    except (TypeError,ValueError): limit=6
+    query=str(query or '').strip()[:500]
+    if not query:return {'available':False,'provider':'none','results':[],'note':'Nhập từ khóa tìm kiếm.'}
+    results=[]; providers=[]; errors=[]
+    key=os.getenv('TAVILY_API_KEY','').strip()
     if key:
-        payload=json.dumps({'api_key':key,'query':query[:500],'search_depth':'basic','max_results':limit,'include_answer':True}).encode()
-        req=urllib.request.Request('https://api.tavily.com/search',data=payload,method='POST',headers={'Content-Type':'application/json'})
         try:
-            with urllib.request.urlopen(req,timeout=18) as r:data=json.loads(r.read().decode())
-            return {'available':True,'provider':'Tavily','answer':data.get('answer',''),'results':[{'title':str(x.get('title',''))[:300],'url':str(x.get('url',''))[:1000],'content':str(x.get('content',''))[:1800]} for x in data.get('results',[])[:limit]]}
-        except Exception as e:logging.warning('Tavily search failed: %s; trying DuckDuckGo',type(e).__name__)
-    # DuckDuckGo HTML search works without a user-supplied API key; public endpoint may rate-limit.
-    try:
-        url='https://html.duckduckgo.com/html/?q='+urllib.parse.quote(query[:500])
-        req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; MotAPIStudio/1.0)','Accept-Language':'vi,en;q=0.8'})
-        with urllib.request.urlopen(req,timeout=15) as r:page=r.read().decode('utf-8','replace')
-        parser=DuckDuckGoParser();parser.feed(page)
-        results=[]
-        for x in parser.results[:limit]:
-            href=html.unescape(x.get('url',''))
-            if href.startswith('//'):href='https:'+href
-            results.append({'title':x.get('title',''),'url':href,'content':x.get('content','')[:1800]})
-        if not results:
-            # Some DDG result layouts encode redirect URLs in links.
-            import re
-            for href,title in re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',page,re.I|re.S)[:limit]:
-                title=re.sub('<[^>]+>','',title);href=html.unescape(href)
-                if href.startswith('//'):href='https:'+href
-                results.append({'title':html.unescape(title).strip(),'url':href,'content':''})
-        return {'available':bool(results),'provider':'DuckDuckGo','answer':'','results':results,'note':'' if results else 'Công cụ tìm kiếm không trả về kết quả; có thể bị giới hạn truy cập.'}
-    except Exception as e:
-        logging.warning('DuckDuckGo search failed: %s',type(e).__name__)
-        return {'available':False,'provider':'DuckDuckGo','results':[],'note':'Tìm kiếm công khai tạm thời không khả dụng; thử lại sau.'}
+            payload=json.dumps({'api_key':key,'query':query,'search_depth':'basic','max_results':limit,'include_answer':True}).encode()
+            req=urllib.request.Request('https://api.tavily.com/search',data=payload,method='POST',headers={'Content-Type':'application/json'})
+            with urllib.request.urlopen(req,timeout=12) as r:data=json.loads(r.read().decode())
+            results.extend([{'title':str(x.get('title',''))[:300],'url':str(x.get('url',''))[:1000],'content':str(x.get('content',''))[:1800],'provider':'Tavily'} for x in data.get('results',[])[:limit]])
+            providers.append('Tavily')
+        except Exception as e:logging.warning('Tavily search failed: %s',type(e).__name__);errors.append('Tavily')
+    # Search providers are independent and run concurrently; public HTML endpoints may rate-limit.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    funcs=[('DuckDuckGo',_search_ddg),('Bing',_search_bing),('Wikipedia',_search_wikipedia),('Google News',_search_google_news)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures={pool.submit(fn,query,limit):name for name,fn in funcs}
+        for future in as_completed(futures,timeout=14):
+            name=futures[future]
+            try:
+                found=future.result()
+                if found:results.extend(found);providers.append(name)
+                else:errors.append(name)
+            except Exception as e:logging.info('%s search unavailable: %s',name,type(e).__name__);errors.append(name)
+    seen=set(); unique=[]
+    for x in results:
+        url=str(x.get('url','')).strip(); title=str(x.get('title','')).strip()
+        if not url.startswith('http') or not title:continue
+        keyurl=urllib.parse.urlparse(url)._replace(query='',fragment='').geturl().rstrip('/').lower()
+        if keyurl in seen:continue
+        seen.add(keyurl);unique.append(x)
+        if len(unique)>=limit:break
+    return {'available':bool(unique),'provider':' + '.join(dict.fromkeys(providers)) if providers else 'none','providers':list(dict.fromkeys(providers)),'answer':'','results':unique,'note':'' if unique else 'Không lấy được kết quả từ các công cụ công khai. Có thể mạng Render bị chặn hoặc các công cụ đang giới hạn truy cập.','failed_providers':errors}
 
 def extract_file(f):
     name=f.filename or 'file'; raw=f.read(); mime=(f.mimetype or mimetypes.guess_type(name)[0] or '').lower(); ext=os.path.splitext(name)[1].lower()
@@ -107,7 +161,20 @@ def extract_file(f):
 @app.get('/')
 def home():return send_from_directory(ROOT,'index.html')
 @app.get('/api/health')
-def health():return jsonify(ok=True,configured=bool(os.getenv('MOTAPIS_API_KEY','').strip()),search_configured=True,search_provider='DuckDuckGo (không cần API key)' if not os.getenv('TAVILY_API_KEY','').strip() else 'Tavily + DuckDuckGo dự phòng',provider='MộtAPI',base_url=os.getenv('MOTAPIS_BASE_URL','https://motapis.com/v1'))
+def health():
+    return jsonify(ok=True,configured=bool(os.getenv('MOTAPIS_API_KEY','').strip()),search_configured=True,search_provider='Tavily + DuckDuckGo + Bing + Wikipedia + Google News' if os.getenv('TAVILY_API_KEY','').strip() else 'DuckDuckGo + Bing + Wikipedia + Google News (không cần key tìm kiếm)',provider='MộtAPI',base_url=os.getenv('MOTAPIS_BASE_URL','https://motapis.com/v1'))
+
+@app.post('/api/diagnostics')
+def diagnostics():
+    # Safe, explicit smoke test: sends a tiny prompt to the selected provider/model.
+    d=request.get_json(silent=True) or {}; model=str(d.get('model') or 'gpt-6-astra').strip()[:120]
+    try:
+        c=client(); result=c.chat.completions.create(model=model,messages=[{'role':'user','content':'Reply with exactly: OK'}],max_tokens=8,stream=False)
+        answer=(result.choices[0].message.content or '').strip() if result.choices else ''
+        return jsonify(ok=True,model=model,reply=answer[:80],provider='MộtAPI')
+    except Exception as e:
+        logging.warning('API diagnostics failed (%s)',type(e).__name__)
+        return jsonify(ok=False,model=model,error=safe_error(e),error_type=type(e).__name__,status=getattr(e,'status_code',None)),502
 @app.get('/api/models')
 def models():
     key=os.getenv('MOTAPIS_API_KEY','').strip()
@@ -158,7 +225,18 @@ def chat():
             if use_search:
                 yield event({'status':'Đã tìm và thêm nguồn web vào ngữ cảnh.' if search and search.get('available') else 'Tìm kiếm web chưa sẵn sàng; câu trả lời có thể chỉ dựa trên kiến thức của model.'})
             yield event({'status':'Đang phân tích yêu cầu và chuẩn bị câu trả lời.' if mode=='chat' else ('Đang đối chiếu nguồn và tổng hợp thông tin.' if mode=='research' else 'Đang lập kế hoạch kỹ thuật và chuẩn bị lời giải code.')})
-            stream=client().chat.completions.create(model=model,messages=msgs,stream=True,temperature=float(os.getenv('AI_TEMPERATURE','0.7')),max_tokens=int(os.getenv('AI_MAX_TOKENS','4096')))
+            api=client()
+            params={'model':model,'messages':msgs,'stream':True,'temperature':float(os.getenv('AI_TEMPERATURE','0.7')),'max_tokens':int(os.getenv('AI_MAX_TOKENS','4096'))}
+            try:
+                stream=api.chat.completions.create(**params)
+            except Exception as first_error:
+                detail=str(first_error).lower(); changed=False
+                if 'temperature' in detail and any(w in detail for w in ('unsupported','not support','does not support','unknown parameter')):
+                    params.pop('temperature',None);changed=True
+                if 'max_tokens' in detail and any(w in detail for w in ('unsupported','not support','unknown parameter','use max_completion_tokens')):
+                    params['max_completion_tokens']=params.pop('max_tokens',4096);changed=True
+                if not changed: raise
+                stream=api.chat.completions.create(**params)
             for chunk in stream:
                 if not chunk.choices:continue
                 c=getattr(chunk.choices[0].delta,'content',None)
@@ -169,7 +247,7 @@ def chat():
                         if t:yield event({'token':t})
             yield event({'done':True,'model':model,'searched':bool(search and search.get('available'))})
         except Exception as e:logging.warning('MộtAPI failed (%s)',type(e).__name__);yield event({'error':safe_error(e)})
-    return Response(generate(),mimetype='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no','Connection':'keep-alive'})
+    return Response(generate(),mimetype='text/event-stream',headers={'Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no','Connection':'keep-alive'})
 @app.errorhandler(413)
 def too_large(_):return jsonify(error=f"Tệp vượt giới hạn {app.config['MAX_CONTENT_LENGTH']//(1024*1024)} MB. Chỉnh MAX_UPLOAD_MB trên Render nếu cần."),413
 if __name__=='__main__':app.run(host='0.0.0.0',port=int(os.getenv('PORT','10000')))

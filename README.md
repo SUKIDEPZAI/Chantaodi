@@ -1,44 +1,60 @@
-# MotAPI Studio — AI Chat, Research & Coding
+# MotAPI Studio — Space Edition (Audit & Reliability Upgrade)
 
-Website chat sử dụng MộtAPI, triển khai trên GitHub + Render **Web Service**.
+Bản nâng cấp cho GitHub + **Render Web Service**, sử dụng MộtAPI theo giao diện OpenAI-compatible.
 
-## Tính năng
-- Giao diện workspace mới, responsive cho điện thoại và máy tính.
-- Chat, Research (nghiên cứu), Coding (lập trình/debug/review).
-- Chọn 17 model theo yêu cầu; tự bổ sung model mà endpoint `/v1/models` trả về.
-- Streaming câu trả lời theo thời gian thực.
-- Tìm kiếm web không cần key riêng qua DuckDuckGo; nếu cấu hình `TAVILY_API_KEY`, Tavily được ưu tiên và DuckDuckGo là phương án dự phòng.
-- Hiển thị bảng Tiến trình với trạng thái công việc và các bước xử lý tổng quát. Không hiển thị chuỗi suy nghĩ nội bộ riêng tư.
-- Đính kèm nhiều tệp/ảnh; trích xuất text, code, PDF, DOCX; gửi ảnh qua image_url nếu model hỗ trợ vision.
-- Xuất từng câu trả lời `.md`/`.txt`, xuất khối code, xuất cả hội thoại `.md`; sao chép, dừng, tạo chat mới.
-- Lịch sử gần đây được lưu local trong trình duyệt; API key chỉ nằm trên backend.
+## Nâng cấp trong bản này
 
-## Cài đặt GitHub + Render
-1. Giải nén ZIP và đưa các file ở thư mục gốc lên repository GitHub: `index.html`, `server.py`, `requirements.txt`, `render.yaml`, `.gitignore`, `README.md`.
+- Giao diện không gian đen, sao tĩnh nhẹ, responsive cho điện thoại; không dùng canvas hoặc vòng lặp animation nền.
+- Streaming SSE với `Cache-Control: no-cache, no-transform` và tắt proxy buffering.
+- Lưu câu hỏi ngay khi gửi, lưu từng phần trả lời theo nhịp 250 ms, lưu phần cuối khi stream kết thúc/dừng/lỗi; không render lại danh sách lịch sử ở mỗi token.
+- Nút **Kiểm tra API** gửi một yêu cầu nhỏ đến model đang chọn, để phân biệt lỗi cấu hình API/model với lỗi giao diện.
+- `/api/health` báo trạng thái cấu hình; `/api/diagnostics` thử kết nối thật; `/api/models` lấy danh sách model từ provider nếu endpoint hỗ trợ.
+- Tìm kiếm song song qua DuckDuckGo, Bing, Wikipedia và Google News RSS mà không yêu cầu API key tìm kiếm. Tavily là tùy chọn và được hợp nhất nếu đã cấu hình. Kết quả được gộp, lọc URL trùng và giới hạn số nguồn.
+- Xử lý lỗi provider dễ hiểu hơn (401, 402, 403, 404, 429, 5xx), thử lại một lần nếu provider báo rõ rằng `temperature` hoặc `max_tokens` không được hỗ trợ.
+- Upload nhiều tệp, trích xuất văn bản/code, PDF, DOCX và gửi ảnh qua `image_url` cho model có hỗ trợ vision.
+- Chế độ Chat / Research / Coding, xuất hội thoại, xuất câu trả lời, xuất code, sao chép nội dung.
+- Giữ khóa API ở backend; không đưa khóa vào HTML hoặc repository.
+
+## Cài đặt bằng Render Web Service
+
+1. Giải nén ZIP và đưa các tệp trong thư mục gốc lên repository GitHub.
 2. Render Dashboard → **New → Web Service** → kết nối repository.
 3. Build Command: `pip install -r requirements.txt`
 4. Start Command: `gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180`
-5. Render → Environment:
-   - `MOTAPIS_API_KEY`: API key từ dashboard MộtAPI
+5. Trong Environment, cấu hình:
+   - `MOTAPIS_API_KEY`: API key hợp lệ từ MộtAPI (**bắt buộc để gọi model**).
    - `MOTAPIS_BASE_URL`: `https://motapis.com/v1`
-   - `TAVILY_API_KEY`: API key Tavily (tùy chọn; DuckDuckGo vẫn dùng được nếu bỏ trống)
    - `MAX_UPLOAD_MB`: `25`
    - `AI_MAX_TOKENS`: `4096`
    - `AI_TEMPERATURE`: `0.7`
-6. Deploy rồi mở `/api/health`; `configured` phải là `true`. Để tìm kiếm web hoạt động, `search_configured` phải là `true`.
+   - `API_TIMEOUT_SECONDS`: `180` (tùy chọn)
+   - `TAVILY_API_KEY`: tùy chọn, không cần nếu dùng các công cụ tìm kiếm công khai.
+6. Deploy. Mở `https://TEN-DICH-VU.onrender.com/api/health`. `configured` phải là `true`.
+7. Mở trang web, chọn đúng model, bấm **Kiểm tra API**. Nút này thực sự gọi model; thông báo sẽ giúp xác định lỗi key, credit, quyền model hoặc endpoint.
+8. Thử tìm kiếm bằng cách bật **Tìm kiếm web** hoặc chọn **Research**. Nếu không có nguồn, thử lại sau và xem log Render; các công cụ tìm kiếm miễn phí có thể chặn truy cập từ datacenter.
 
-## Tìm kiếm web
-Không cần nhập API key tìm kiếm: DuckDuckGo được dùng mặc định. Có thể thêm `TAVILY_API_KEY` trong Render Environment để ưu tiên Tavily. Không đưa key vào HTML/GitHub. Các công cụ tìm kiếm công khai vẫn có thể giới hạn truy cập tạm thời.
+## Nếu API không kết nối
 
-## Giới hạn cần biết
-- Chế độ Coding hỗ trợ phân tích yêu cầu, tạo code, debug từ mô tả/tệp, review và xuất code. Bản này **chưa** chạy lệnh terminal, tự sửa GitHub repo hay thực thi test tự động như một coding agent toàn quyền.
-- Tiến trình hiển thị trạng thái/tóm tắt, không phải chuỗi suy nghĩ nội bộ.
-- Lịch sử lưu trong localStorage của trình duyệt; chưa có tài khoản đăng nhập hoặc PostgreSQL.
-- Upload mặc định 25 MB mỗi request; giới hạn thực tế còn phụ thuộc Render, RAM và nhà cung cấp.
-- Model có thể không được cấp quyền dù xuất hiện trong danh sách; hãy kiểm tra `/api/models` và dashboard MộtAPI.
-- Prompt và tệp gửi tới MộtAPI/Tavily để xử lý. Tránh gửi dữ liệu bí mật.
+- **401**: API key sai/hết hiệu lực; cập nhật `MOTAPIS_API_KEY` trong Render, không đặt trong GitHub.
+- **402 / NOT_ENOUGH_BALANCE**: kiểm tra số dư/credit ở MộtAPI.
+- **403**: kiểm tra quyền model, tài khoản, hạn mức hoặc chính sách của gateway.
+- **404**: kiểm tra `MOTAPIS_BASE_URL` và tên model; không phải mọi tên model gợi ý đều chắc chắn tồn tại trên tài khoản.
+- **429**: rate limit/quota; giảm tần suất hoặc kiểm tra hạn mức.
+- **5xx / timeout**: lỗi upstream hoặc provider chậm; thử model khác và xem log.
+- Nếu `/api/health` trả về HTML thay vì JSON, Render có thể chưa deploy đúng `server.py`, start command sai, hoặc ứng dụng đang crash.
 
+## Giới hạn và riêng tư
 
-### UI and conversation saving
+- Tìm kiếm công khai không cần key nhưng không được bảo đảm luôn khả dụng; mạng Render hoặc các công cụ tìm kiếm có thể giới hạn truy cập. Tìm kiếm không phải API của model và không thể sửa lỗi key/credit của MộtAPI.
+- Chỉ lưu lịch sử trên trình duyệt hiện tại (`localStorage`), chưa có đăng nhập hoặc PostgreSQL. Dữ liệu trong trình duyệt có thể bị xóa nếu xóa dữ liệu trang hoặc hết dung lượng; hãy xuất chat quan trọng.
+- Bản Coding chưa tự chạy terminal, chưa tự sửa repository GitHub và chưa chạy test trong sandbox. Không nên coi đây là agent toàn quyền như Codex.
+- Panel tiến trình hiển thị trạng thái công việc tổng quát, không hiển thị suy nghĩ nội bộ riêng tư của model.
+- Các tệp và nội dung chat được gửi đến nhà cung cấp model khi bạn sử dụng tính năng AI. Tránh tải lên bí mật, mật khẩu hoặc dữ liệu nhạy cảm.
 
-The interface uses a near-black space theme with a small, static star field (no canvas animation) to keep rendering lightweight. Conversations and partial streamed replies are saved in the current browser's localStorage during generation. This protects against refreshes and interrupted streams, but it is not cross-device backup; export important chats regularly. For cross-device persistence, add authentication and a database such as PostgreSQL.
+## Kiểm tra đã thực hiện với gói nguồn
+
+- `python -m py_compile server.py`: đạt.
+- `node --check` trên JavaScript nhúng trong `index.html`: đạt.
+- ZIP integrity: kiểm tra bằng `zipfile.testzip()`.
+
+Các kiểm tra tĩnh này không thay thế kiểm thử trực tiếp trên tài khoản MộtAPI/Render; để xác nhận kết nối thật, dùng nút **Kiểm tra API** sau khi deploy.
