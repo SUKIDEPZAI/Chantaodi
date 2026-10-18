@@ -49,8 +49,31 @@ def export():
             buf = io.BytesIO(); wb.save(buf); buf.seek(0)
             return send_file(buf, as_attachment=True, download_name=safe + '.xlsx',
                              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        if fmt == 'pptx':
+            from pptx import Presentation
+            from pptx.util import Pt
+            prs = Presentation(); slides = []; cur = None
+            for line in content.split('\n'):
+                m = re.match(r'^(#{1,2}) (.+)', line)
+                if m: cur = [_clean(m.group(2)), []]; slides.append(cur); continue
+                if line.strip() and not line.strip().startswith('```'):
+                    if cur is None: cur = [title, []]; slides.append(cur)
+                    cur[1].append(_clean(re.sub(r'^\s*([-*]|\d+\.) ', '', line)))
+            for t, b in (slides or [[title, [content[:500]]]]):
+                s = prs.slides.add_slide(prs.slide_layouts[1]); s.shapes.title.text = t[:120]
+                tf = s.placeholders[1].text_frame; tf.text = '\n'.join(b[:10])
+                for p in tf.paragraphs: p.font.size = Pt(20)
+            buf = io.BytesIO(); prs.save(buf); buf.seek(0)
+            return send_file(buf, as_attachment=True, download_name=safe + '.pptx',
+                             mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+        if fmt == 'rtf':
+            def esc(t):
+                return ''.join('\\' + c if c in '\\{}' else (c if ord(c) < 128 else '\\u%d?' % (ord(c) if ord(c) < 32768 else ord(c) - 65536)) for c in t)
+            body = '\\par\n'.join(esc(_clean(l)) for l in content.split('\n'))
+            data = '{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\\f0\\fs24 ' + body + '}'
+            return send_file(io.BytesIO(data.encode('ascii')), as_attachment=True, download_name=safe + '.rtf', mimetype='application/rtf')
         return jsonify(error='Định dạng chưa hỗ trợ trên máy chủ.'), 400
     except ImportError:
-        return jsonify(error='Thiếu thư viện: thêm python-docx và openpyxl vào requirements.txt.'), 501
+        return jsonify(error='Thiếu thư viện: kiểm tra python-docx, openpyxl, python-pptx trong requirements.txt.'), 501
     except Exception:
         return jsonify(error='Không tạo được tệp. Kiểm tra nội dung và log Render.'), 500
