@@ -1,20 +1,17 @@
 services:
   - type: web
-    name: motapi-ai-studio
+    name: motapi-studio
     runtime: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
     envVars:
-      - key: MOTAPIS_BASE_URL
-        value: https://motapis.com/v1
       - key: MOTAPIS_API_KEY
         sync: false
-      - key: TAVILY_API_KEY
+      - key: APP_PASSWORD
         sync: false
+      - key: MOTAPIS_BASE_URL
+        value: https://motapis.com/v1
       - key: MAX_UPLOAD_MB
         value: "25"
       - key: AI_MAX_TOKENS
         value: "4096"
-      - key: AI_TEMPERATURE
-        value: "0.7"
