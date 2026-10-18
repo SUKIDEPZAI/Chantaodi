@@ -1,4 +1,5 @@
-import os, json, base64, mimetypes, logging, urllib.request, urllib.parse
+import os, json, base64, mimetypes, logging, urllib.request, urllib.parse, html
+from html.parser import HTMLParser
 from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from openai import OpenAI
@@ -29,16 +30,60 @@ def safe_error(exc):
     logging.warning('Provider error type=%s status=%s',type(exc).__name__,status)
     return 'Gọi MộtAPI thất bại. Kiểm tra log Render và quyền model/API key.'
 
+class DuckDuckGoParser(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.results=[]; self.cur=None; self.capture=None; self.buf=[]
+    def handle_starttag(self, tag, attrs):
+        a=dict(attrs); cls=a.get('class','')
+        if tag=='a' and 'result__a' in cls:
+            self.cur={'title':'','url':a.get('href',''),'content':''}; self.capture='title'; self.buf=[]
+        elif self.cur and tag=='a' and 'result__snippet' in cls:
+            self.capture='content'; self.buf=[]
+        elif self.cur and tag=='div' and 'result__snippet' in cls:
+            self.capture='content'; self.buf=[]
+    def handle_data(self,data):
+        if self.cur is not None and self.capture:self.buf.append(data)
+    def handle_endtag(self,tag):
+        if self.cur is None:return
+        if tag=='a' and self.capture=='title':
+            self.cur['title']=' '.join(''.join(self.buf).split()); self.capture=None; self.buf=[]
+            if self.cur['title'] and self.cur['url']: self.results.append(self.cur); self.cur=None
+        elif self.capture=='content' and tag in ('a','div'):
+            # Snippet can appear after title; associate it with the most recent result.
+            if self.results and not self.results[-1].get('content'): self.results[-1]['content']=' '.join(''.join(self.buf).split())
+            self.capture=None; self.buf=[]
+
 def web_search(query, limit=6):
-    key=os.getenv('TAVILY_API_KEY','').strip()
-    if not key:return {'available':False,'results':[],'note':'Chưa cấu hình TAVILY_API_KEY'}
-    payload=json.dumps({'api_key':key,'query':query[:500],'search_depth':'basic','max_results':max(1,min(int(limit),8)),'include_answer':True}).encode()
-    req=urllib.request.Request('https://api.tavily.com/search',data=payload,method='POST',headers={'Content-Type':'application/json'})
+    limit=max(1,min(int(limit),8)); key=os.getenv('TAVILY_API_KEY','').strip()
+    if key:
+        payload=json.dumps({'api_key':key,'query':query[:500],'search_depth':'basic','max_results':limit,'include_answer':True}).encode()
+        req=urllib.request.Request('https://api.tavily.com/search',data=payload,method='POST',headers={'Content-Type':'application/json'})
+        try:
+            with urllib.request.urlopen(req,timeout=18) as r:data=json.loads(r.read().decode())
+            return {'available':True,'provider':'Tavily','answer':data.get('answer',''),'results':[{'title':str(x.get('title',''))[:300],'url':str(x.get('url',''))[:1000],'content':str(x.get('content',''))[:1800]} for x in data.get('results',[])[:limit]]}
+        except Exception as e:logging.warning('Tavily search failed: %s; trying DuckDuckGo',type(e).__name__)
+    # DuckDuckGo HTML search works without a user-supplied API key; public endpoint may rate-limit.
     try:
-        with urllib.request.urlopen(req,timeout=18) as r:data=json.loads(r.read().decode())
-        return {'available':True,'answer':data.get('answer',''),'results':[{'title':str(x.get('title',''))[:300],'url':str(x.get('url',''))[:1000],'content':str(x.get('content',''))[:1800]} for x in data.get('results',[])]}
+        url='https://html.duckduckgo.com/html/?q='+urllib.parse.quote(query[:500])
+        req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; MotAPIStudio/1.0)','Accept-Language':'vi,en;q=0.8'})
+        with urllib.request.urlopen(req,timeout=15) as r:page=r.read().decode('utf-8','replace')
+        parser=DuckDuckGoParser();parser.feed(page)
+        results=[]
+        for x in parser.results[:limit]:
+            href=html.unescape(x.get('url',''))
+            if href.startswith('//'):href='https:'+href
+            results.append({'title':x.get('title',''),'url':href,'content':x.get('content','')[:1800]})
+        if not results:
+            # Some DDG result layouts encode redirect URLs in links.
+            import re
+            for href,title in re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',page,re.I|re.S)[:limit]:
+                title=re.sub('<[^>]+>','',title);href=html.unescape(href)
+                if href.startswith('//'):href='https:'+href
+                results.append({'title':html.unescape(title).strip(),'url':href,'content':''})
+        return {'available':bool(results),'provider':'DuckDuckGo','answer':'','results':results,'note':'' if results else 'Công cụ tìm kiếm không trả về kết quả; có thể bị giới hạn truy cập.'}
     except Exception as e:
-        logging.warning('Web search failed: %s',type(e).__name__);return {'available':False,'results':[],'note':'Tìm kiếm web tạm thời thất bại'}
+        logging.warning('DuckDuckGo search failed: %s',type(e).__name__)
+        return {'available':False,'provider':'DuckDuckGo','results':[],'note':'Tìm kiếm công khai tạm thời không khả dụng; thử lại sau.'}
 
 def extract_file(f):
     name=f.filename or 'file'; raw=f.read(); mime=(f.mimetype or mimetypes.guess_type(name)[0] or '').lower(); ext=os.path.splitext(name)[1].lower()
@@ -62,7 +107,7 @@ def extract_file(f):
 @app.get('/')
 def home():return send_from_directory(ROOT,'index.html')
 @app.get('/api/health')
-def health():return jsonify(ok=True,configured=bool(os.getenv('MOTAPIS_API_KEY','').strip()),search_configured=bool(os.getenv('TAVILY_API_KEY','').strip()),provider='MộtAPI',base_url=os.getenv('MOTAPIS_BASE_URL','https://motapis.com/v1'))
+def health():return jsonify(ok=True,configured=bool(os.getenv('MOTAPIS_API_KEY','').strip()),search_configured=True,search_provider='DuckDuckGo (không cần API key)' if not os.getenv('TAVILY_API_KEY','').strip() else 'Tavily + DuckDuckGo dự phòng',provider='MộtAPI',base_url=os.getenv('MOTAPIS_BASE_URL','https://motapis.com/v1'))
 @app.get('/api/models')
 def models():
     key=os.getenv('MOTAPIS_API_KEY','').strip()
@@ -79,7 +124,7 @@ def search_route():
     d=request.get_json(silent=True) or {}; q=str(d.get('query','')).strip()
     if not q:return jsonify(error='Nhập từ khóa cần tìm.'),400
     r=web_search(q,d.get('max_results',5))
-    if not r['available']:return jsonify(error='Tìm kiếm web chưa được cấu hình. Thêm TAVILY_API_KEY trong Render Environment.'),503
+    if not r['available']:return jsonify(error=r.get('note') or 'Tìm kiếm công khai tạm thời không khả dụng.'),503
     return jsonify(r)
 @app.post('/api/chat')
 def chat():
@@ -95,7 +140,7 @@ def chat():
         else:user[0]['text']+=f"\n\n--- Tệp: {f['name']} ---\n{f['text']}"
     search=web_search(message,6) if use_search and message else None
     if search and search.get('available'):
-        refs=['KẾT QUẢ TÌM KIẾM WEB. Hãy kiểm chứng, không bịa thêm nguồn:']
+        refs=['KẾT QUẢ TÌM KIẾM WEB ('+str(search.get('provider','web'))+'). Hãy kiểm chứng, không bịa thêm nguồn:']
         if search.get('answer'):refs.append('Tóm tắt tìm kiếm: '+str(search['answer'])[:2500])
         refs += [f"[{i}] {x['title']}\nURL: {x['url']}\nNội dung: {x['content']}" for i,x in enumerate(search.get('results',[]),1)]
         user[0]['text']+='\n\n'+'\n\n'.join(refs)
