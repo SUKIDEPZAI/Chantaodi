@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101010"><meta name="description" content="Chantaodi — AI workspace with streaming chat, web research, projects and files.">
+  <title>Chantaodi · AI Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell" id="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="brand-mark">✳</div><span>Chantaodi</span><span class="brand-tag">WORKSPACE</span><button class="icon-btn sidebar-close" id="closeSidebar" title="Đóng sidebar">×</button></div>
+    <button class="new-chat" id="newChat"><span class="plus">＋</span> Cuộc trò chuyện mới <kbd>Ctrl K</kbd></button>
+    <div class="side-nav" role="navigation" aria-label="Điều hướng">
+      <button class="nav-item active" data-view="chats"><span class="nav-icon">◷</span> Cuộc trò chuyện</button>
+      <button class="nav-item" data-view="search"><span class="nav-icon">⌕</span> Tìm kiếm web <kbd>⌘ F</kbd></button>
+      <button class="nav-item" data-view="workspace"><span class="nav-icon">▤</span> Workspace <span class="nav-count" id="fileCount">0</span></button>
+    </div>
+    <div class="side-section-title"><span>DỰ ÁN</span><span><button class="icon-btn" id="manageProject" title="Quản lý dự án">⚙</button><button class="icon-btn" id="createProject" title="Tạo dự án">＋</button></span></div>
+    <select id="projectSelect" class="project-select" aria-label="Chọn dự án"><option value="">Không gian cá nhân</option></select>
+    <div class="side-section-title history-heading"><span>GẦN ĐÂY</span><span id="historyCounter" class="muted-mini"></span></div>
+    <input class="history-search" id="historySearch" placeholder="Tìm hội thoại…" autocomplete="off">
+    <div class="history-list" id="historyList"><div class="side-empty">Đang tải hội thoại…</div></div>
+    <div class="sidebar-bottom"><div class="provider-dot" id="providerDot"></div><div class="provider-copy"><div id="providerLabel">Đang kiểm tra dịch vụ…</div><small id="searchLabel">Công cụ tìm kiếm đang khởi tạo</small></div><button class="icon-btn" id="settingsBtn" title="Cài đặt">⚙</button></div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <button class="icon-btn mobile-menu" id="openSidebar" title="Mở menu">☰</button>
+      <div class="crumb"><span id="crumbProject">Workspace cá nhân</span><span class="crumb-sep">/</span><strong id="chatTitle">Cuộc trò chuyện mới</strong></div>
+      <div class="top-actions"><button class="test-api-btn" id="testApi">Kiểm tra API</button><span class="connection-pill" id="connectionPill"><i></i><span>Đang kiểm tra</span></span><select id="modelSelect" class="model-select" aria-label="Chọn model"><option>Đang tải model…</option></select><button class="icon-btn" id="topMore" title="Tác vụ">···</button></div>
+    </header>
+
+    <section class="view active" id="chatView">
+      <div class="conversation-scroll" id="conversationScroll">
+        <div class="welcome" id="welcome">
+          <div class="welcome-mark">✳</div><div class="eyebrow">KHÔNG GIAN LÀM VIỆC AI</div>
+          <h1>Bạn muốn xây dựng<br><span>điều gì hôm nay?</span></h1>
+          <p>Trò chuyện, nghiên cứu web nhiều nguồn, phân tích dự án và làm việc với tệp trong một không gian.</p>
+          <div class="prompt-cards">
+            <button class="prompt-card" data-mode="research" data-prompt="Tìm kiếm thông tin mới nhất về AI, đối chiếu nhiều nguồn và dẫn liên kết."><span class="prompt-symbol">⌕</span><strong>Nghiên cứu web</strong><small>Đối chiếu nhiều nguồn và trích dẫn</small><span class="card-arrow">↗</span></button>
+            <button class="prompt-card" data-mode="coding" data-prompt="Hãy phân tích yêu cầu, đề xuất kiến trúc và viết code có thể chạy, kèm test và hướng dẫn cài đặt."><span class="prompt-symbol">⌘</span><strong>Lập trình & sửa lỗi</strong><small>Phân tích code, đề xuất patch và test</small><span class="card-arrow">↗</span></button>
+            <button class="prompt-card" data-mode="chat" data-prompt="Giúp tôi lập kế hoạch cho một dự án từ mục tiêu đến các bước thực hiện."><span class="prompt-symbol">◇</span><strong>Lập kế hoạch</strong><small>Chia công việc thành bước rõ ràng</small><span class="card-arrow">↗</span></button>
+            <button class="prompt-card" data-mode="chat" data-prompt="Phân tích tệp tôi tải lên, chỉ ra cấu trúc, lỗi và hướng cải thiện."><span class="prompt-symbol">▤</span><strong>Phân tích tệp</strong><small>Đọc tài liệu, mã nguồn, dữ liệu</small><span class="card-arrow">↗</span></button>
+          </div>
+          <div class="welcome-foot"><span class="tiny-spark">✳</span> Bạn có thể yêu cầu AI tìm kiếm, viết code hoặc tạo tài liệu.</div>
+        </div>
+        <div class="messages hidden" id="messages" aria-live="polite"></div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer" id="composer">
+          <div class="composer-top"><div class="mode-tabs"><button class="mode-tab active" data-mode="chat">Chat</button><button class="mode-tab" data-mode="research">Research</button><button class="mode-tab" data-mode="coding">Coding</button></div><label class="search-toggle"><input id="webToggle" type="checkbox"><span class="toggle-track"></span><span>Tìm web</span></label></div>
+          <div id="attachmentChips" class="attachment-chips"></div>
+          <textarea id="promptInput" rows="1" placeholder="Nhắn cho Chantaodi… (Enter để gửi, Shift + Enter xuống dòng)" aria-label="Tin nhắn"></textarea>
+          <div class="composer-bottom"><div class="composer-tools"><label class="tool-btn" for="fileInput" title="Đính kèm tệp">＋ <span>Đính kèm</span></label><input type="file" id="fileInput" multiple hidden><button class="tool-btn" id="voiceInput" title="Nhập bằng giọng nói">♩ <span>Giọng nói</span></button><button class="tool-btn" id="customPrompt" title="Hướng dẫn tùy chỉnh">☷ <span>Hướng dẫn</span></button><button class="tool-btn" id="exportChat" title="Xuất hội thoại">⇩ <span>Xuất chat</span></button></div><div class="send-tools"><span class="send-shortcut">Shift ↵ xuống dòng</span><button id="stopBtn" class="stop-btn hidden">■ Dừng</button><button id="sendBtn" class="send-btn">Gửi <span>↑</span></button></div></div>
+        </div><div class="composer-note">AI có thể mắc lỗi. Kiểm tra dữ kiện quan trọng và mã trước khi sử dụng.</div>
+      </div>
+    </section>
+
+    <section class="view" id="searchView">
+      <div class="content-view"><div class="view-heading"><div class="eyebrow">WEB RESEARCH</div><h1>Tìm kiếm trên web</h1><p>Chạy nhiều nguồn song song, tách nhánh truy vấn, xếp hạng và xem rõ nguồn nào phản hồi.</p></div>
+        <form id="searchForm" class="research-form"><span class="research-icon">⌕</span><input id="searchQuery" placeholder="Tìm tài liệu, thông tin mới, hướng dẫn…" autocomplete="off"><button type="submit" id="searchRun">Tìm kiếm <span>↗</span></button></form>
+        <div class="research-options"><label><input type="checkbox" id="deepSearch" checked> Tìm sâu: tài liệu chính thức + tin mới</label><select id="searchLimit"><option value="8">8 kết quả</option><option value="12">12 kết quả</option><option value="15">15 kết quả</option></select></div>
+        <div id="searchMeta" class="search-meta hidden"></div><div id="providerStatus" class="provider-status"></div><div id="searchResults" class="search-results"><div class="empty-research"><div class="empty-icon">⌕</div><strong>Sẵn sàng tìm kiếm</strong><span>Nhập từ khóa để bắt đầu. Kết quả sẽ hiển thị kèm nguồn và trạng thái nhà cung cấp.</span></div></div>
+      </div>
+    </section>
+
+    <section class="view" id="workspaceView">
+      <div class="content-view workspace-view"><div class="view-heading"><div class="eyebrow">PROJECT FILES</div><h1>Workspace</h1><p>Tập hợp tệp tham khảo, đầu ra do AI tạo và tài liệu dự án của bạn.</p></div>
+        <div class="workspace-toolbar"><div><strong id="workspaceSummary">Tệp của bạn</strong><small id="workspaceUsage">Các tệp được lưu theo phiên trình duyệt này.</small></div><div><label class="secondary-btn" for="workspaceInput">＋ Tải tệp lên</label><input type="file" id="workspaceInput" multiple hidden></div></div>
+        <div id="workspaceList" class="workspace-list"><div class="loading-row">Đang tải workspace…</div></div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="inspector hidden" id="inspector"><div class="inspector-header"><div><small>ARTIFACT / FILE</small><strong id="inspectorTitle">Tệp</strong></div><div class="inspector-actions"><button class="icon-btn" id="copyArtifact" title="Sao chép">▢</button><button class="icon-btn" id="downloadArtifact" title="Tải xuống">⇩</button><button class="icon-btn" id="closeInspector" title="Đóng">×</button></div></div><div class="inspector-tabs"><button class="active" data-tab="preview">Xem trước</button><button data-tab="code">Mã nguồn</button></div><div class="inspector-preview" id="artifactPreview"><iframe id="previewFrame" sandbox="allow-scripts allow-forms" title="Xem trước tệp"></iframe></div><pre class="inspector-code hidden" id="artifactCode"></pre></aside>
+</div>
+
+<div class="toast hidden" id="toast" role="status"></div>
+<div class="modal-backdrop hidden" id="modalBackdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><strong id="modalTitle">Cài đặt</strong><button class="icon-btn" id="modalClose" title="Đóng">×</button></div><div id="modalBody" class="modal-body"></div><div id="modalFooter" class="modal-footer"></div></section></div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

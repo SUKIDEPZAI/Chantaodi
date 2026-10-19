@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: chantaodi-codex
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
+    envVars:
+      - key: MOTAPIS_API_KEY
+        sync: false
+      - key: MOTAPIS_BASE_URL
+        value: https://motapis.com/v1
+      - key: APP_PASSWORD
+        sync: false
+      - key: DATABASE_PATH
+        value: data/chantaodi.sqlite3
+      - key: WORKSPACE_DIR
+        value: data/workspace
+      - key: SEARCH_TIMEOUT_SECONDS
+        value: "8"
+      - key: AI_MAX_TOKENS
+        value: "4096"
